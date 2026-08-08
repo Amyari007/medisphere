@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+tools/preview_*.png
+.DS_Store
+models/*.task
+models/*.glb
+session_data/

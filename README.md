@@ -5,6 +5,12 @@
 **Validation** → Every metric is unit-tested against known synthetic ground truth (7 modules + full pipeline dry-run — see table below).
 **Result** → A working, gracefully-degrading real-time system: joint angles, tremor (FFT), smoothness (jerk-based), finger independence, session logging.
 
+## Demo
+
+![Open hand — high openness, motor score trending up](demo/demo_open_hand.jpeg)
+![Closed fist — low openness, tracked repetition](demo/demo_closed_fist.jpeg)
+![Partial close — mid-range extension](demo/demo_partial_close.jpeg)
+
 ## What's Tested
 
 | Component | Status |

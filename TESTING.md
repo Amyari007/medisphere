@@ -1,91 +1,147 @@
-# Testing & Validation
+# Testing
 
-This document explains what has actually been verified in MediSphere, how, and against what benchmark — as opposed to what has *not* been verified. The goal is to be precise about the difference between "the code runs" and "the code is correct."
+This document lists every automated test in MediSphere, organized by module, with a plain explanation of what each test checks and why it exists.
 
-## Philosophy
+**Current result: 57 / 57 tests passing.**
 
-Every computational module (biomechanics, kinematics, signal processing, session logic) is validated against **synthetic inputs with a known, independently-calculated correct answer** — not just "does it run without crashing." A test that only checks a function doesn't throw an exception proves far less than a test that feeds in a signal with a known 6 Hz oscillation and checks the output actually says 6 Hz.
-
-## Current status
-
-**57 / 57 automated tests passing**, reproducible with:
-
+Run them yourself:
 ```bash
 pip install pytest
 python -m pytest tests/ -v
 ```
 
-or, without pytest, by running any test file directly (each is self-contained):
+---
 
-```bash
-python tests/test_biomechanics.py
-```
+## Summary
 
-## Test inventory and benchmark used per module
+| Module | File | Test Count |
+|---|---|---|
+| Gesture recognition | `tests/test_gestures.py` | 8 |
+| Biomechanics & kinematics | `tests/test_biomechanics.py` | 9 |
+| Signal processing (tremor, filtering) | `tests/test_signal_processing.py` | 5 |
+| Audio feedback | `tests/test_audio.py` | 3 |
+| Session logic (reps, reaction, fatigue, scoring, logging) | `tests/test_session.py` | 12 |
+| Clinical flags | `tests/test_clinical_flags.py` | 17 |
+| Full pipeline integration | `tests/test_integration.py` | 2 |
+| Application entry point | `tests/test_main_dryrun.py` | 1 |
+| **Total** | | **57** |
 
-### `tests/test_gestures.py` — 8 tests
-**Benchmark:** hand-constructed synthetic landmark coordinates with an explicit, known geometry (e.g., fingertips deliberately placed closer to the wrist than the mid-joint, to represent "curled").
-Validates: open palm / closed fist / pinch / point / swipe detection.
+---
 
-### `tests/test_biomechanics.py` — 9 tests
-**Benchmark:** synthetic landmarks with hand-calculated correct angles.
-- Colinear points → joint angle must read ≈180°
-- A deliberate right-angle bend → must read ≈90°
-- Identical values fed to all 5 fingers → correlation-based independence score must be low
-- Independent random values per finger → independence score must be high
-- A point moved at an exact, arithmetic 100 px/s → measured velocity must match ≈100 px/s
-- A constant-velocity path vs. a randomly-perturbed path of the same route → smoothness score must rank the constant path higher
+## Gesture Recognition — `test_gestures.py`
 
-### `tests/test_signal_processing.py` — 5 tests
-**Benchmark:** signals with a known, deliberately injected frequency.
-- A synthetic 6 Hz oscillation injected into fingertip position → detector must recover ≈6 Hz
-- A 25 Hz "noise" component injected on top of a 2 Hz "real" component → low-pass filter must suppress the 25 Hz energy
-- A perfectly static signal → must report no tremor
-- 4 seconds of pure random jitter (no periodicity at all) → debounce logic must prevent a false "detected"
+| Test | What it checks |
+|---|---|
+| `test_open_palm` | An open-hand landmark pattern is correctly classified as "open palm" |
+| `test_closed_fist` | A curled-hand landmark pattern is correctly classified as "closed fist" |
+| `test_point_finger` | A single-extended-finger pattern is correctly classified as "pointing" |
+| `test_pinch` | Thumb and index tip brought close together is correctly classified as a "pinch" |
+| `test_no_pinch_when_far_apart` | Thumb and index tip held apart is correctly classified as *not* a pinch |
+| `test_swipe_right_detected` | A hand moving steadily rightward is correctly classified as a right swipe |
+| `test_swipe_left_detected` | A hand moving steadily leftward is correctly classified as a left swipe |
+| `test_no_swipe_on_small_motion` | Small, non-directional hand movement does not falsely register as a swipe |
 
-### `tests/test_audio.py` — 3 tests
-**Benchmark:** the generated waveform checked against itself via independent FFT analysis, not just trusting the generating formula.
-- Requested a 440 Hz tone, ran FFT on the actual output samples, confirmed the spectral peak is ≈440 Hz
-- Checked no phase discontinuity ("click") between consecutive audio buffer chunks
+---
 
-### `tests/test_session.py` — 12 tests
-**Benchmark:** hand-constructed timestamp/state sequences with a known correct outcome.
-- 200 frames of synthetic rapid flicker across the open/close threshold → must count **zero** repetitions
-- One deliberate, sustained open→close cycle → must count exactly **one**
-- Data written to SQLite + CSV, then read back → must match exactly what was written (round-trip test)
-- A declining synthetic sequence vs. a flat synthetic sequence → fatigue trend must fire only on the declining case
+## Biomechanics & Kinematics — `test_biomechanics.py`
 
-### `tests/test_clinical_flags.py` — 17 tests
-**Benchmark:** values placed exactly at, just above, and just below every documented threshold, to confirm boundaries behave correctly (not just "roughly right").
+| Test | What it checks |
+|---|---|
+| `test_straight_finger_all_joints_near_180` | A fully straight finger's joint angles read close to 180° |
+| `test_bent_finger_joint2_near_90` | A finger bent at a right angle reads close to 90° at that joint |
+| `test_all_fingers_present` | Joint-angle output includes all five fingers, every frame |
+| `test_hand_openness_higher_for_straight_fingers` | The openness score is higher for extended fingers than curled ones |
+| `test_rom_tracker_records_swing` | Range-of-motion tracking correctly records the difference between a finger's most-curled and most-extended positions |
+| `test_finger_independence_low_when_synchronized` | Fingers that move identically together score low on the independence metric |
+| `test_finger_independence_high_when_uncorrelated` | Fingers that move independently of each other score high on the independence metric |
+| `test_kinematics_velocity_matches_known_speed` | A point moved at an exact 100 px/s is measured as ≈100 px/s |
+| `test_kinematics_smoothness_higher_for_smooth_motion` | A constant-velocity path scores higher on smoothness than a randomly jittered path over the same route |
 
-### `tests/test_integration.py` — 2 tests
-**Benchmark:** a complete simulated session (multiple repetitions, injected tremor) run through every module together, checking the whole pipeline agrees, not just each piece in isolation.
+---
 
-### `tests/test_main_dryrun.py` — 1 test
-**Benchmark:** `main.py`'s own actual code, executed end-to-end, with only the camera and MediaPipe calls substituted for deterministic synthetic input. This is the closest proof available, without a physical camera, that the *real* application — not a reimplementation of its logic — runs correctly.
+## Signal Processing — `test_signal_processing.py`
 
-## Real bugs this process actually caught
+| Test | What it checks |
+|---|---|
+| `test_lowpass_filter_removes_high_frequency_noise` | A 25 Hz noise component mixed into a 2 Hz signal is suppressed by the filter, leaving the 2 Hz content intact |
+| `test_tremor_detects_known_frequency_after_filtering` | A deliberately injected 6 Hz oscillation is correctly detected at ≈6 Hz |
+| `test_tremor_still_ignores_still_hand_after_filtering` | A perfectly stationary signal does not register as tremor |
+| `test_tremor_ignores_a_single_noisy_frame_spike` | Four seconds of pure random jitter (no real periodic pattern) never triggers a false tremor detection |
+| `test_stability_score_sane_range` | The stability score stays within its defined 0–100 bounds |
 
-Two defects were found during live webcam testing (not by the automated suite, since neither was a *logic* bug — the code worked exactly as written, the design was wrong):
+---
 
-1. **Visibility** — the biofeedback sphere/hologram was tuned against a flat test background and was nearly invisible against a real, cluttered room. Fixed by adding a darkened backdrop and increasing opacity; verified by re-rendering against a synthetic high-contrast background.
-2. **Repetition count inflation** — an early version registered 79 repetitions in under 4 minutes of live use, versus a much smaller number of deliberate hand-openings. Traced to landmark-tracking jitter flickering across the open/close threshold. Fixed by requiring a sustained minimum hold duration before a transition counts, and a dedicated regression test (`test_repetition_tracker_ignores_brief_threshold_jitter`) was added specifically to prevent this from recurring silently.
+## Audio Feedback — `test_audio.py`
 
-## What is explicitly NOT validated
+| Test | What it checks |
+|---|---|
+| `test_pitch_decreases_as_hand_opens` | The pitch-mapping function produces a lower frequency as hand openness increases |
+| `test_generated_waveform_actually_contains_target_frequency` | A requested 440 Hz tone is generated, then independently re-analyzed with an FFT, confirming the output actually contains 440 Hz |
+| `test_consecutive_blocks_are_phase_continuous` | Back-to-back audio buffer chunks connect smoothly, without an audible click at the seam |
 
-- **No clinical validation.** The composite Motor Score and every clinical flag threshold are heuristics defined for this project, motivated by the general direction of findings in rehabilitation literature — not derived from patient data, not compared against a validated instrument like the Fugl-Meyer Assessment.
-- **Tremor/stability/smoothness thresholds are heuristic**, tuned by reasoning and spot-checking, not calibrated against a labeled dataset of real tremor or real patient movement.
-- **3D hologram rendering** was verified end-to-end using a software OpenGL renderer (Mesa llvmpipe) in a Linux test environment; behavior against a real GPU driver is separately confirmed only by direct use, not by the automated suite.
-- **Audio playback** — the waveform math is verified by FFT; actual sound through real speakers can only be confirmed by listening.
+---
 
-## Reproducing this yourself
+## Session Logic — `test_session.py`
 
-```bash
-git clone https://github.com/Amyari007/medisphere.git
-cd medisphere
-pip install -r requirements.txt
-pip install pytest
-python -m pytest tests/ -v
-```
+| Test | What it checks |
+|---|---|
+| `test_repetition_tracker_counts_full_open_close_cycles` | A complete open-then-close hand cycle is counted as one repetition |
+| `test_repetition_tracker_ignores_partial_open_without_close` | An open hand that never closes again is not counted as a repetition |
+| `test_repetition_tracker_ignores_brief_threshold_jitter` | 200 frames of rapid flicker across the open/close boundary produce **zero** false repetitions |
+| `test_repetition_tracker_counts_genuine_slow_cycle_despite_debounce` | One deliberate, sustained open-close cycle is still counted correctly despite the jitter filter above |
+| `test_reaction_timer_measures_real_elapsed_time` | The time between a cue and a response is measured correctly |
+| `test_reaction_timer_ignores_response_without_cue` | A response with no prior cue does not register a reaction time |
+| `test_fatigue_detects_real_declining_trend` | A clearly declining sequence of rep values is flagged as a fatigue trend |
+| `test_fatigue_does_not_flag_stable_performance` | A flat, non-declining sequence is not flagged as fatigue |
+| `test_fatigue_returns_none_with_too_few_reps` | Fatigue analysis withholds a result until enough repetitions have occurred |
+| `test_motor_score_higher_for_better_performance` | Better sub-metric inputs produce a higher composite score than worse ones |
+| `test_motor_score_handles_missing_submetrics` | The composite score still computes sensibly when one or more sub-metrics are unavailable |
+| `test_session_logger_round_trip` | Data written to SQLite and CSV is read back identically to what was written |
 
-You should see `57 passed`. If any test fails, that's a genuine regression worth investigating, not a flaky test — none of these tests are timing-sensitive or dependent on external state.
+---
+
+## Clinical Flags — `test_clinical_flags.py`
+
+| Test | What it checks |
+|---|---|
+| `test_no_flags_for_healthy_looking_values` | No flags fire when all metrics are within normal-looking ranges |
+| `test_flags_reduced_extension` | A low extension value triggers the reduced-extension flag |
+| `test_no_flag_at_extension_boundary_and_above` | The extension flag does not fire exactly at or above its threshold |
+| `test_flags_limited_rom` | A low range-of-motion value triggers the limited-ROM flag |
+| `test_flags_reduced_stability` | A low stability value triggers the reduced-stability flag |
+| `test_flags_jerky_movement` | A poor smoothness value triggers the jerky-movement flag |
+| `test_no_flag_for_smooth_movement` | A good smoothness value does not trigger the jerky-movement flag |
+| `test_flags_low_independence_as_possible_enslaving` | A low independence score triggers the possible-enslaving flag |
+| `test_flags_slow_reaction_as_info_not_warning` | A slow reaction time is flagged at "info" level, not treated as a warning |
+| `test_flags_unsatisfactory_hand_opening` | Consistently low peak openness across recent reps triggers a flag |
+| `test_no_flag_for_good_hand_opening` | Consistently high peak openness does not trigger that flag |
+| `test_recent_peak_openness_avg_uses_only_last_n_reps` | The rolling openness average correctly uses only the most recent reps, not the whole session |
+| `test_recent_peak_openness_avg_none_for_empty_reps` | The rolling average returns nothing when there is no rep data yet |
+| `test_tremor_severity_mild_vs_significant` | Tremor amplitude correctly determines "mild" vs. "significant" severity |
+| `test_no_tremor_flag_when_not_detected` | No tremor flag appears when tremor was not detected |
+| `test_none_inputs_produce_no_flags` | Missing data never produces a false flag |
+| `test_multiple_simultaneous_flags` | Multiple flags can fire at once, independently, without interfering with each other |
+
+---
+
+## Full Pipeline Integration — `test_integration.py`
+
+| Test | What it checks |
+|---|---|
+| `test_full_session_pipeline_runs_and_produces_sane_values` | A complete simulated session — multiple reps, biomechanics, kinematics, session tracking together — runs and produces values within expected ranges |
+| `test_tremor_detected_when_injected_into_session` | A tremor injected into a full simulated session is still correctly detected end-to-end, not just in an isolated unit test |
+
+---
+
+## Application Entry Point — `test_main_dryrun.py`
+
+| Test | What it checks |
+|---|---|
+| `test_main_runs_end_to_end_without_crashing` | `main.py`'s actual code runs start to finish — camera and hand-tracking calls swapped for deterministic test input — including writing a session report to disk, without error |
+
+---
+
+## Two issues these tests were written to catch after they were first found live
+
+- **Repetition count inflation:** an early version counted 79 repetitions in under 4 minutes of real use, caused by landmark jitter flickering across the open/close threshold. `test_repetition_tracker_ignores_brief_threshold_jitter` now guards against this specifically.
+- **Tremor false positives:** a single noisy analysis frame could occasionally register a false tremor detection. `test_tremor_ignores_a_single_noisy_frame_spike` now guards against this specifically.
